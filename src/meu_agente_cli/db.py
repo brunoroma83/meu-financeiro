@@ -1630,6 +1630,146 @@ def update_monthly_bill(
         print(f"[ERROR] Erro ao atualizar conta mensal: {e}", file=sys.stderr)
         return False
 
+def check_future_monthly_bills(record_id: int) -> List[Dict[str, Any]]:
+    """
+    Verifica se existem lançamentos futuros projetados não pagos da mesma conta mensal
+    no mesmo ano corrente (meses estritamente posteriores ao mês da conta informada).
+    NUNCA inclui meses anteriores.
+    """
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT description, due_date, date, user_name
+                FROM financial_records
+                WHERE id = %s AND active = TRUE
+            """, (record_id,))
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                return []
+                
+            desc, due_dt, dt, u_name = row
+            target_dt = due_dt or dt
+            if not target_dt or not desc:
+                conn.close()
+                return []
+                
+            cur_month = target_dt.month
+            cur_year = target_dt.year
+            norm_key = normalize_bill_name(desc)
+            u_clean = u_name.strip().lower() if u_name else None
+            
+            # Busca estritamente meses POSTERIORES do mesmo ano, não pagos e ativos
+            sql = """
+                SELECT id, description, amount, due_date, date
+                FROM financial_records
+                WHERE active = TRUE AND lower(type) = 'despesa' AND nature = 'monthly'
+                  AND is_paid = FALSE
+                  AND EXTRACT(YEAR FROM COALESCE(due_date, date)) = %s
+                  AND EXTRACT(MONTH FROM COALESCE(due_date, date)) > %s
+            """
+            params = [cur_year, cur_month]
+            if u_clean:
+                sql += " AND LOWER(user_name) = %s"
+                params.append(u_clean)
+                
+            sql += " ORDER BY COALESCE(due_date, date) ASC, id ASC"
+            cur.execute(sql, tuple(params))
+            
+            future_items = []
+            for r in cur.fetchall():
+                if normalize_bill_name(r[1]) == norm_key:
+                    item_dt = r[3] or r[4]
+                    future_items.append({
+                        "id": r[0],
+                        "description": r[1],
+                        "amount": float(r[2]),
+                        "month_year": f"{item_dt.month:02d}/{item_dt.year}",
+                        "due_date": item_dt.strftime("%d/%m/%Y")
+                    })
+            conn.close()
+            return future_items
+    except Exception as e:
+        print(f"[ERROR] Erro ao verificar contas futuras: {e}", file=sys.stderr)
+        return []
+
+def delete_monthly_bill(record_id: int, delete_future: bool = False) -> Tuple[bool, int, str]:
+    """
+    Desativa (soft-delete) uma conta mensal em financial_records.
+    Se delete_future=True, desativa também as projeções futuras não pagas do mesmo ano
+    (meses posteriores ao mês da conta).
+    Contas de meses anteriores NUNCA são afetadas.
+    """
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, description, due_date, date, user_name
+                FROM financial_records
+                WHERE id = %s AND active = TRUE
+            """, (record_id,))
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                return False, 0, "Conta não encontrada ou já inativa."
+                
+            rec_id, desc, due_dt, dt, u_name = row
+            target_dt = due_dt or dt
+            norm_key = normalize_bill_name(desc)
+            u_clean = u_name.strip().lower() if u_name else None
+            
+            # 1. Desativa a conta selecionada
+            cur.execute("UPDATE financial_records SET active = FALSE WHERE id = %s", (rec_id,))
+            deleted_count = 1
+            
+            # 2. Se delete_future=True, desativa as projeções futuras de meses posteriores do mesmo ano
+            future_deleted = 0
+            if delete_future and target_dt and desc:
+                cur_month = target_dt.month
+                cur_year = target_dt.year
+                
+                sql_future = """
+                    SELECT id, description
+                    FROM financial_records
+                    WHERE active = TRUE AND lower(type) = 'despesa' AND nature = 'monthly'
+                      AND is_paid = FALSE
+                      AND EXTRACT(YEAR FROM COALESCE(due_date, date)) = %s
+                      AND EXTRACT(MONTH FROM COALESCE(due_date, date)) > %s
+                """
+                params = [cur_year, cur_month]
+                if u_clean:
+                    sql_future += " AND LOWER(user_name) = %s"
+                    params.append(u_clean)
+                    
+                cur.execute(sql_future, tuple(params))
+                future_rows = cur.fetchall()
+                matching_ids = [r[0] for r in future_rows if normalize_bill_name(r[1]) == norm_key]
+                
+                if matching_ids:
+                    cur.execute("UPDATE financial_records SET active = FALSE WHERE id = ANY(%s)", (matching_ids,))
+                    future_deleted = len(matching_ids)
+                    deleted_count += future_deleted
+                    
+                # Desativa também o modelo em recurring_bills para evitar re-projeção futura
+                cur.execute("SELECT id, name FROM recurring_bills WHERE active = TRUE")
+                rb_rows = cur.fetchall()
+                rb_match_ids = [r[0] for r in rb_rows if normalize_bill_name(r[1]) == norm_key]
+                if rb_match_ids:
+                    cur.execute("UPDATE recurring_bills SET active = FALSE WHERE id = ANY(%s)", (rb_match_ids,))
+                    
+            conn.commit()
+        conn.close()
+        
+        if future_deleted > 0:
+            msg = f"Conta '{desc}' e {future_deleted} projeção(ões) futura(s) excluídas com sucesso."
+        else:
+            msg = f"Conta '{desc}' excluída com sucesso."
+        return True, deleted_count, msg
+    except Exception as e:
+        print(f"[ERROR] Erro ao excluir conta mensal: {e}", file=sys.stderr)
+        return False, 0, f"Erro ao excluir conta mensal: {e}"
+
 def list_credit_cards(active_only: bool = True, user_name: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retorna os cartões cadastrados com contagem de compras vinculadas."""
     try:

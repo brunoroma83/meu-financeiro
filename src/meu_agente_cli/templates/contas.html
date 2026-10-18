@@ -4,6 +4,20 @@
 
 {% block content %}
 <div class="space-y-6">
+    <!-- Feedback Alerts -->
+    {% if feedback_msg %}
+    <div class="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-xl text-xs flex items-center justify-between">
+        <span>✅ {{ feedback_msg }}</span>
+        <button onclick="this.parentElement.remove()" class="text-emerald-400 hover:text-white">&times;</button>
+    </div>
+    {% endif %}
+    {% if feedback_error %}
+    <div class="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-3 rounded-xl text-xs flex items-center justify-between">
+        <span>⚠️ {{ feedback_error }}</span>
+        <button onclick="this.parentElement.remove()" class="text-rose-400 hover:text-rose-300">&times;</button>
+    </div>
+    {% endif %}
+
     <!-- Header & Action Bar -->
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800">
         <div>
@@ -112,6 +126,7 @@
                             R$ {{ "%.2f"|format(b.amount) }}
                         </td>
                         <td class="py-3 px-4 text-center space-x-1">
+                            {% if not b.is_card_invoice %}
                             <button type="button"
                                     onclick="openEditContaModal(this)"
                                     data-id="{{ b.id }}"
@@ -124,6 +139,17 @@
                                     class="px-2 py-1 rounded text-xs font-sans transition bg-slate-800 hover:bg-slate-700 text-indigo-400 border border-slate-700 inline-block">
                                 ✏️
                             </button>
+                            <button type="button"
+                                    onclick="openDeleteContaModal(this)"
+                                    data-id="{{ b.id }}"
+                                    data-name="{{ b.name }}"
+                                    data-amount="{{ '%.2f'|format(b.amount) }}"
+                                    data-duedate="{{ b.due_date.strftime('%d/%m/%Y') if b.due_date and b.due_date.strftime else (b.due_date or '') }}"
+                                    title="Excluir conta"
+                                    class="px-2 py-1 rounded text-xs font-sans transition bg-slate-800 hover:bg-rose-950/50 text-rose-400 hover:text-rose-300 border border-slate-700 hover:border-rose-500/30 inline-block">
+                                🗑️
+                            </button>
+                            {% endif %}
                             <button hx-post="/contas/toggle/{{ b.id }}?mes_ano={{ mes_ano_input }}&user_name={{ active_user_filter or '' }}"
                                     hx-target="#bills-table-container" hx-swap="outerHTML"
                                     class="px-2.5 py-1 rounded text-xs font-sans transition {% if b.is_paid %}bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700{% else %}bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-sm{% endif %}">
@@ -275,5 +301,145 @@ function openEditContaModal(btn) {
 
     document.getElementById('modal-edit-conta').classList.remove('hidden');
 }
+
+function openDeleteContaModal(btn) {
+    const id = btn.dataset.id;
+    const name = btn.dataset.name;
+    const amount = btn.dataset.amount;
+    const duedate = btn.dataset.duedate;
+
+    document.getElementById('delete-conta-form').action = '/contas/delete/' + id;
+    document.getElementById('delete-conta-name').textContent = name;
+    document.getElementById('delete-conta-valor').textContent = 'R$ ' + amount;
+    document.getElementById('delete-conta-vencimento').textContent = duedate;
+
+    const loadingEl = document.getElementById('delete-future-loading');
+    const optionsEl = document.getElementById('delete-future-options');
+    const noFutureEl = document.getElementById('delete-no-future');
+    const futureText = document.getElementById('delete-future-text');
+    const radioDesc = document.getElementById('delete-future-radio-desc');
+    const radioSingle = document.getElementById('delete-radio-single');
+
+    if (radioSingle) radioSingle.checked = true;
+
+    loadingEl.classList.remove('hidden');
+    optionsEl.classList.add('hidden');
+    noFutureEl.classList.add('hidden');
+
+    document.getElementById('modal-delete-conta').classList.remove('hidden');
+
+    fetch('/contas/check-future/' + id)
+        .then(response => response.json())
+        .then(data => {
+            loadingEl.classList.add('hidden');
+            if (data.count && data.count > 0) {
+                const months = data.bills.map(b => b.month_year).join(', ');
+                futureText.textContent = `Esta conta possui ${data.count} projeção(ões) futura(s) não paga(s) no restante do ano nos meses: [${months}].`;
+                radioDesc.textContent = `Apaga esta conta e as ${data.count} projeções futuras não pagas (${months}).`;
+                optionsEl.classList.remove('hidden');
+            } else {
+                noFutureEl.classList.remove('hidden');
+            }
+        })
+        .catch(err => {
+            console.error('Erro ao verificar projeções futuras:', err);
+            loadingEl.classList.add('hidden');
+            noFutureEl.classList.remove('hidden');
+        });
+}
+
+function closeDeleteContaModal() {
+    document.getElementById('modal-delete-conta').classList.add('hidden');
+}
 </script>
+
+<!-- Modal: Excluir Conta Mensal -->
+<div id="modal-delete-conta" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-base font-bold text-white flex items-center space-x-2">
+                <span>🗑️ Excluir Conta Mensal</span>
+            </h3>
+            <button onclick="closeDeleteContaModal()" class="text-slate-400 hover:text-white text-lg">&times;</button>
+        </div>
+
+        <form id="delete-conta-form" method="POST" action="" class="space-y-4 text-xs">
+            <input type="hidden" name="mes_ano" value="{{ mes_ano_input }}">
+            <input type="hidden" name="user_name" value="{{ active_user_filter or '' }}">
+
+            <!-- Detalhes da Conta Selecionada -->
+            <div class="bg-slate-950/80 border border-slate-800/80 rounded-xl p-3.5 space-y-1.5">
+                <div class="flex items-center justify-between">
+                    <span class="text-slate-400 font-medium">Conta:</span>
+                    <span id="delete-conta-name" class="font-bold text-white text-sm"></span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-slate-400 font-medium">Valor:</span>
+                    <span id="delete-conta-valor" class="font-mono font-bold text-white"></span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-slate-400 font-medium">Vencimento:</span>
+                    <span id="delete-conta-vencimento" class="text-slate-300 font-mono"></span>
+                </div>
+            </div>
+
+            <!-- Área de Verificação de Projeções Futuras -->
+            <div id="delete-future-container" class="space-y-3">
+                <div id="delete-future-loading" class="text-slate-400 flex items-center space-x-2 py-2">
+                    <span class="text-indigo-400">⏳</span>
+                    <span>Verificando projeções futuras no ano...</span>
+                </div>
+
+                <!-- Conteúdo quando há projeções futuras -->
+                <div id="delete-future-options" class="hidden space-y-2.5">
+                    <div class="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-300 text-[11px] leading-relaxed">
+                        <span class="font-bold block text-xs mb-1">⚠️ Projeções Futuras Encontradas</span>
+                        <span id="delete-future-text"></span>
+                    </div>
+
+                    <div class="space-y-2 pt-1">
+                        <label class="flex items-start space-x-2.5 p-2.5 rounded-lg border border-slate-800 hover:bg-slate-800/40 cursor-pointer transition">
+                            <input type="radio" id="delete-radio-single" name="delete_future" value="false" checked
+                                   class="mt-0.5 text-indigo-600 focus:ring-indigo-500 bg-slate-900 border-slate-700">
+                            <div>
+                                <span class="font-semibold text-white block">Excluir apenas esta conta</span>
+                                <span class="text-[10px] text-slate-400">Apaga somente o lançamento deste mês selecionado. As projeções dos meses seguintes permanecem inalteradas.</span>
+                            </div>
+                        </label>
+
+                        <label class="flex items-start space-x-2.5 p-2.5 rounded-lg border border-rose-500/30 bg-rose-500/5 hover:bg-rose-500/10 cursor-pointer transition">
+                            <input type="radio" name="delete_future" value="true"
+                                   class="mt-0.5 text-rose-600 focus:ring-rose-500 bg-slate-900 border-slate-700">
+                            <div>
+                                <span class="font-semibold text-rose-300 block">Excluir deste mês e de todos os meses futuros</span>
+                                <span id="delete-future-radio-desc" class="text-[10px] text-slate-400">Apaga esta conta e as projeções futuras não pagas deste ano.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Conteúdo quando NÃO há projeções futuras -->
+                <div id="delete-no-future" class="hidden p-3 bg-slate-950/60 border border-slate-800 rounded-xl text-slate-300 text-[11px] leading-relaxed">
+                    <span>Nenhuma projeção futura encontrada para esta conta no restante do ano. A exclusão será aplicada apenas a este mês.</span>
+                </div>
+            </div>
+
+            <!-- Aviso de Segurança sobre Meses Anteriores -->
+            <div class="flex items-center space-x-2 text-[10px] text-emerald-400 bg-emerald-500/10 p-2.5 rounded-lg border border-emerald-500/20">
+                <span>🛡️</span>
+                <span>Contas de meses anteriores <strong>nunca</strong> serão afetadas ou excluídas.</span>
+            </div>
+
+            <div class="flex justify-end space-x-2 pt-2">
+                <button type="button" onclick="closeDeleteContaModal()"
+                        class="px-3.5 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition">Cancelar</button>
+                <button type="submit"
+                        class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-medium shadow-sm transition flex items-center space-x-1.5">
+                    <span>🗑️</span>
+                    <span>Confirmar Exclusão</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
 {% endblock %}

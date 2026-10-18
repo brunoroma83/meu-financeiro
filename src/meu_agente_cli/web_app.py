@@ -224,7 +224,13 @@ async def dashboard_view(request: Request, mes_ano: Optional[str] = None, user_n
 # =====================================================================
 
 @app.get("/contas", response_class=HTMLResponse)
-async def contas_view(request: Request, mes_ano: Optional[str] = None, user_name: Optional[str] = None):
+async def contas_view(
+    request: Request,
+    mes_ano: Optional[str] = None,
+    user_name: Optional[str] = None,
+    msg: Optional[str] = None,
+    error: Optional[str] = None
+):
     user = request.state.user
     m, y, mes_ano_db = parse_month_year(mes_ano)
     mes_ano_input = f"{y:04d}-{m:02d}"
@@ -243,7 +249,9 @@ async def contas_view(request: Request, mes_ano: Optional[str] = None, user_name
         "bills": bills,
         "total_mes": total_mes,
         "total_pago": total_pago,
-        "total_pendente": total_pendente
+        "total_pendente": total_pendente,
+        "feedback_msg": msg,
+        "feedback_error": error
     })
 
 @app.post("/contas/toggle/{record_id}")
@@ -330,6 +338,42 @@ async def projetar_fixas_action(request: Request, mes_ano: Optional[str] = Form(
     m, y, _ = parse_month_year(mes_ano)
     db.project_annual_fixed_expenses(year=y)
     return RedirectResponse(url=f"/contas?mes_ano={y:04d}-{m:02d}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.get("/contas/check-future/{record_id}")
+async def check_future_bills_action(record_id: int):
+    future_bills = db.check_future_monthly_bills(record_id)
+    return JSONResponse({
+        "count": len(future_bills),
+        "bills": future_bills
+    })
+
+@app.post("/contas/delete/{record_id}")
+async def delete_conta_action(
+    request: Request,
+    record_id: int,
+    mes_ano: Optional[str] = Form(None),
+    user_name: Optional[str] = Form(None),
+    delete_future: Optional[str] = Form(None)
+):
+    mes_ano = mes_ano or request.query_params.get("mes_ano")
+    user_name = user_name or request.query_params.get("user_name")
+    
+    del_future = (delete_future == "1" or delete_future == "true" or delete_future == "on")
+    ok, count, msg = db.delete_monthly_bill(record_id=record_id, delete_future=del_future)
+    
+    m, y, _ = parse_month_year(mes_ano)
+    import urllib.parse
+    params = [f"mes_ano={y:04d}-{m:02d}"]
+    if user_name and user_name.strip():
+        params.append(f"user_name={urllib.parse.quote(user_name.strip().lower())}")
+        
+    param_type = "msg" if ok else "error"
+    params.append(f"{param_type}={urllib.parse.quote(msg)}")
+    
+    return RedirectResponse(
+        url=f"/contas?{'&'.join(params)}",
+        status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 # =====================================================================
