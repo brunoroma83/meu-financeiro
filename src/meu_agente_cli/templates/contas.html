@@ -42,8 +42,7 @@
 
             <!-- Botão Projetar Ano -->
             <form method="POST" action="/contas/projetar" class="inline"
-                  hx-post="/contas/projetar" hx-target="#bills-table-container" hx-swap="outerHTML"
-                  hx-confirm="Deseja projetar todas as contas fixas do catálogo para este ano?">
+                  onsubmit="return confirm('Deseja projetar todas as contas fixas do catálogo para este ano?');">
                 <input type="hidden" name="mes_ano" value="{{ mes_ano_input }}">
                 <input type="hidden" name="user_name" value="{{ active_user_filter or '' }}">
                 <button type="submit" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition">
@@ -150,11 +149,12 @@
                                 🗑️
                             </button>
                             {% endif %}
-                            <button hx-post="/contas/toggle/{{ b.id }}?mes_ano={{ mes_ano_input }}&user_name={{ active_user_filter or '' }}"
-                                    hx-target="#bills-table-container" hx-swap="outerHTML"
-                                    class="px-2.5 py-1 rounded text-xs font-sans transition {% if b.is_paid %}bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700{% else %}bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-sm{% endif %}">
-                                {% if b.is_paid %}Desmarcar{% else %}Marcar Pago{% endif %}
-                            </button>
+                            <form method="POST" action="/contas/toggle/{{ b.id }}?mes_ano={{ mes_ano_input }}&user_name={{ active_user_filter or '' }}" class="inline">
+                                <button type="submit"
+                                        class="px-2.5 py-1 rounded text-xs font-sans transition {% if b.is_paid %}bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700{% else %}bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-sm{% endif %}">
+                                    {% if b.is_paid %}Desmarcar{% else %}Marcar Pago{% endif %}
+                                </button>
+                            </form>
                         </td>
                     </tr>
                     {% else %}
@@ -177,7 +177,7 @@
             <h3 class="text-base font-bold text-white">Adicionar Conta ao Mês</h3>
             <button onclick="document.getElementById('modal-add-bill').classList.add('hidden')" class="text-slate-400 hover:text-white">&times;</button>
         </div>
-        <form method="POST" action="/contas/add" hx-post="/contas/add" hx-target="#bills-table-container" hx-swap="outerHTML"
+        <form method="POST" action="/contas/add"
               onsubmit="document.getElementById('modal-add-bill').classList.add('hidden')" class="space-y-3 text-xs">
             <input type="hidden" name="mes_ano" value="{{ mes_ano_input }}">
             <div>
